@@ -22,27 +22,58 @@
 	Bundle the frontend panels for admin and user settings
 */
 
+/*
+ TODO: refactor dev-server to act as developer-facing webserver,
+ proxying other requests to testrig instance. That way actual livereload works
+*/
+
+const Promise = require("bluebird");
 const path = require('path');
-// Forked budo-express supports EventEmitter, to write bundle.js to disk in development
-const budoExpress = require('@f0x52/budo-express');
+const browserify = require("browserify");
 const babelify = require('babelify');
-const fs = require("fs");
-const EventEmitter = require('events');
+const fsSync = require("fs");
+const fs = require("fs").promises;
+const chalk = require("chalk");
+
+const debugMode = process.env.NODE_ENV == "development";
 
 function out(name = "") {
 	return path.join(__dirname, "../assets/dist/", name);
+}
+
+if (!fsSync.existsSync(out())){
+	fsSync.mkdirSync(out(), { recursive: true });
 }
 
 module.exports = {out};
 
 const splitCSS = require("./lib/split-css.js");
 
-const bundles = {
-	"./frontend/index.js": "frontend.js",
-	"./settings-panel/index.js": "settings.js",
-	// "./panels/admin/index.js": "admin-panel.js",
-	// "./panels/user/index.js": "user-panel.js",
-};
+let cssFiles = fsSync.readdirSync(path.join(__dirname, "./css")).map((file) => {
+	return path.join(__dirname, "./css", file);
+});
+
+const bundles = [
+	{
+		outputFile: "frontend.js",
+		entryFiles: ["./frontend/index.js"],
+		babelOptions: {
+			global: true,
+			exclude: /node_modules\/(?!photoswipe-dynamic-caption-plugin)/,
+		}
+	},
+	{
+		outputFile: "react-bundle.js",
+		factors: {
+			"./settings/index.js": "settings.js",
+			"./swagger/index.js": "swagger.js",
+		}
+	},
+	{
+		outputFile: "_delete", // not needed, we only care for the css that's already split-out by css-extract
+		entryFiles: cssFiles,
+	}
+];
 
 const postcssPlugins = [
 	"postcss-import",
@@ -52,79 +83,83 @@ const postcssPlugins = [
 	"postcss-color-mod-function"
 ].map((plugin) => require(plugin)());
 
-let uglifyifyInProduction;
+function browserifyConfig({transforms = [], plugins = [], babelOptions = {}}) {
+	if (!debugMode) {
+		transforms.push([
+			require("uglifyify"), {
+				global: true,
+				exts: ".js"
+			}
+		]);
+	}
 
-if (process.env.NODE_ENV != "development") {
-	console.log("uglifyify'ing production bundles");
-	uglifyifyInProduction = [
-		require("uglifyify"), {
-			global: true,
-			exts: ".js"
-		}
-	];
+	return {
+		transform: [
+			[
+				babelify.configure({
+					presets: [
+						[
+							require.resolve("@babel/preset-env"),
+							{
+								modules: "cjs"
+							}
+						],
+						require.resolve("@babel/preset-react")
+					]
+				}),
+				babelOptions
+			],
+			...transforms
+		],
+		plugin: [
+			[require("icssify"), {
+				parser: require("postcss-scss"),
+				before: postcssPlugins,
+				mode: 'global'
+			}],
+			[require("css-extract"), { out: splitCSS }],
+			...plugins
+		],
+		extensions: [".js", ".jsx", ".css"],
+		fullPaths: debugMode,
+		debug: debugMode
+	};
 }
 
-const browserifyConfig = {
-	transform: [
-		[
-			babelify.configure({
-				presets: [
-					[
-						require.resolve("@babel/preset-env"),
-						{
-							modules: "cjs"
-						}
-					],
-					require.resolve("@babel/preset-react")
-				]
-			}),
-			{
-				global: true,
-				exclude: /node_modules\/(?!photoswipe-dynamic-caption-plugin)/,
-			}
-		],
-		uglifyifyInProduction
-	],
-	plugin: [
-		[require("icssify"), {
-			parser: require("postcss-scss"),
-			before: postcssPlugins,
-			mode: 'global'
-		}],
-		[require("css-extract"), { out: splitCSS }],
-		[require("factor-bundle"), {
-			outputs: Object.values(bundles).map((file) => {
+bundles.forEach((bundle) => {
+	let transforms, plugins, entryFiles;
+	let { outputFile, babelOptions} = bundle;
+
+	if (bundle.factors != undefined) {
+		let factorBundle = [require("factor-bundle"), {
+			outputs: Object.values(bundle.factors).map((file) => {
 				return out(file);
 			})
-		}]
-	],
-	extensions: [".js", ".jsx", ".css"]
-};
+		}];
 
-const entryFiles = Object.keys(bundles);
+		plugins = [factorBundle];
 
-fs.readdirSync(path.join(__dirname, "./css")).forEach((file) => {
-	entryFiles.push(path.join(__dirname, "./css", file));
-});
+		entryFiles = Object.keys(bundle.factors);
+	} else {
+		entryFiles = bundle.entryFiles;
+	}
 
-if (!fs.existsSync(out())){
-	fs.mkdirSync(out(), { recursive: true });
-}
+	let config = browserifyConfig({transforms, plugins, babelOptions, entryFiles, outputFile});
 
-const server = budoExpress({
-	port: 8081,
-	host: "localhost",
-	entryFiles: entryFiles,
-	basePath: __dirname,
-	bundlePath: "bundle.js",
-	staticPath: out(),
-	expressApp: require("./dev-server.js"),
-	browserify: browserifyConfig,
-	livereloadPattern: "**/*.{html,js,svg}"
-});
-
-if (server instanceof EventEmitter) {
-	server.on("update", (contents) => {
-		fs.writeFileSync(out("bundle.js"), contents);
+	Promise.try(() => {
+		return browserify(entryFiles, config);
+	}).then((bundler) => {
+		Promise.promisifyAll(bundler);
+		return bundler.bundleAsync();
+	}).then((bundle) => {
+		if (outputFile != "_delete") {
+			console.log(chalk.magenta("JS: writing to", outputFile));
+			return fs.writeFile(out(`_${outputFile}`), bundle);
+		}
+	}).catch((e) => {
+		console.log(chalk.red("Fatal error in bundler:"), bundle.bundle);
+		console.log(e.message);
+		console.log(e.stack);
+		console.log();
 	});
-}
+});
