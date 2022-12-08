@@ -57,9 +57,9 @@ func Emojify(emojis []model.Emoji, inputText string) string {
 			buf.WriteString(safeURL)
 			buf.WriteString(`" title=":`)
 			buf.WriteString(safeCode)
-			buf.WriteString(`:" alt=":`)
+			buf.WriteString(`:" alt="`)
 			buf.WriteString(safeCode)
-			buf.WriteString(`:" class="emoji"/>`)
+			buf.WriteString(`" class="emoji"/>`)
 
 			return buf.String()
 		},
