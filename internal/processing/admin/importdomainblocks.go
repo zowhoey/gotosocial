@@ -32,28 +32,42 @@ import (
 	"github.com/superseriousbusiness/gotosocial/internal/gtsmodel"
 )
 
-// DomainBlocksImport handles the import of a bunch of domain blocks at once, by calling the DomainBlockCreate function for each domain in the provided file.
-func (p *processor) DomainBlocksImport(ctx context.Context, account *gtsmodel.Account, domains *multipart.FileHeader) ([]*apimodel.DomainBlock, gtserror.WithCode) {
+func readDomains(domains *multipart.FileHeader) ([]*apimodel.DomainBlock, error) {
 	f, err := domains.Open()
 	if err != nil {
-		return nil, gtserror.NewErrorBadRequest(fmt.Errorf("DomainBlocksImport: error opening attachment: %s", err))
+		return nil, err
 	}
+	defer f.Close()
+
 	buf := new(bytes.Buffer)
 	size, err := io.Copy(buf, f)
 	if err != nil {
-		return nil, gtserror.NewErrorBadRequest(fmt.Errorf("DomainBlocksImport: error reading attachment: %s", err))
+		return nil, err
 	}
+
 	if size == 0 {
-		return nil, gtserror.NewErrorBadRequest(errors.New("DomainBlocksImport: could not read provided attachment: size 0 bytes"))
+		return nil, errors.New("size 0 bytes")
 	}
 
-	d := []apimodel.DomainBlock{}
+	d := []*apimodel.DomainBlock{}
 	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
-		return nil, gtserror.NewErrorBadRequest(fmt.Errorf("DomainBlocksImport: could not read provided attachment: %s", err))
+		return nil, err
 	}
 
-	blocks := []*apimodel.DomainBlock{}
-	for _, d := range d {
+	return d, nil
+}
+
+// DomainBlocksImport handles the import of a bunch of domain blocks at once, by calling the DomainBlockCreate function for each domain in the provided file.
+func (p *processor) DomainBlocksImport(ctx context.Context, account *gtsmodel.Account, domains *multipart.FileHeader) ([]*apimodel.DomainBlock, gtserror.WithCode) {
+	raw, err := readDomains(domains)
+	if err != nil {
+		return nil, gtserror.NewErrorBadRequest(fmt.Errorf("DomainBlocksImport: could not read provided attachment: %w", err))
+	}
+
+	normalized, errs := normalizeDomainBlocks(raw)
+
+	blocks := make([]*apimodel.DomainBlock, 0, len(normalized))
+	for _, d := range normalized {
 		block, err := p.DomainBlockCreate(ctx, account, d.Domain.Domain, false, d.PublicComment, "", "")
 		if err != nil {
 			return nil, err
