@@ -22,26 +22,12 @@ const React = require("react");
 const syncpipe = require("syncpipe");
 const { createSlice } = require("@reduxjs/toolkit");
 
-const { reducer, actions } = createSlice({
+const slice = createSlice({
 	name: "checklist",
 	initialState: {},
 	reducers: {
 		create: (state, { payload }) => {
-			const { entries, uniqueKey, defaultValue } = payload;
-			return syncpipe(entries, [
-				(_) => _.map((entry) => {
-					let key = entry[uniqueKey];
-					return [
-						key,
-						{
-							...entry,
-							key,
-							checked: state[key]?.checked ?? entry.checked ?? defaultValue
-						}
-					];
-				}),
-				(_) => Object.fromEntries(_)
-			]);
+			return createState(payload, state);
 		},
 		updateAll: (state, { payload: value }) => {
 			return syncpipe(state, [
@@ -62,26 +48,40 @@ const { reducer, actions } = createSlice({
 	}
 });
 
+const { reducer: reducer2, actions } = slice;
+
+function reducer() {
+	console.log("REDUCING", ...arguments);
+	return reducer2(...arguments);
+}
+
+function createState({ entries, uniqueKey, defaultValue }, oldState) {
+	console.log("creating state", oldState);
+	return syncpipe(entries, [
+		(_) => _.map((entry) => {
+			let key = entry[uniqueKey];
+			return [
+				key,
+				{
+					...entry,
+					key,
+					checked: oldState?.[key]?.checked ?? entry.checked ?? defaultValue
+				}
+			];
+		}),
+		(_) => Object.fromEntries(_)
+	]);
+}
+
 module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "key", defaultValue = false }) {
-	const [state, dispatch] = React.useReducer(reducer, {});
+	const [state, dispatch] = React.useReducer(reducer, null, () => createState({ entries, uniqueKey, defaultValue }));
 
 	const [someSelected, setSomeSelected] = React.useState(false);
 	const [toggleAllState, setToggleAllState] = React.useState(0);
 	const toggleAllRef = React.useRef(null);
 
 	React.useEffect(() => {
-		/* 
-			entries changed, update state,
-			re-using old state if available for key
-		*/
-		dispatch(actions.create({ entries, uniqueKey, defaultValue }));
-
-		/* eslint-disable-next-line react-hooks/exhaustive-deps */
-	}, [entries]);
-
-	console.log(state);
-
-	React.useEffect(() => {
+		performance.mark("GoToSocial-useCheckListInput-useEffect-start");
 		/* Updates (un)check all checkbox, based on shortcode checkboxes
 			 Can be 0 (not checked), 1 (checked) or 2 (indeterminate)
 		 */
@@ -108,7 +108,19 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 			setToggleAllState(all ? 1 : 0);
 			toggleAllRef.current.indeterminate = false;
 		}
+		performance.mark("GoToSocial-useCheckListInput-useEffect-finish");
+		performance.measure("GoToSocial-useCheckListInput-useEffect-processed", "GoToSocial-useCheckListInput-useEffect-start", "GoToSocial-useCheckListInput-useEffect-finish");
 	}, [state, toggleAllRef]);
+
+	const reset = React.useCallback(
+		() => dispatch(actions.updateAll(defaultValue)),
+		[defaultValue]
+	);
+
+	const onChange = React.useCallback(
+		(key, value) => dispatch(actions.update({ key, value })),
+		[]
+	);
 
 	return React.useMemo(() => {
 		function toggleAll(e) {
@@ -120,14 +132,6 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 
 			dispatch(actions.updateAll(selectAll));
 			setToggleAllState(selectAll);
-		}
-
-		function reset() {
-			dispatch(actions.updateAll(defaultValue));
-		}
-
-		function onChange(key, value) {
-			dispatch(actions.update({ key, value }));
 		}
 
 		function selectedValues() {
@@ -154,5 +158,5 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 				onChange: toggleAll
 			}
 		});
-	}, [defaultValue, name, someSelected, state, toggleAllState]);
+	}, [name, onChange, reset, someSelected, state, toggleAllState]);
 };
