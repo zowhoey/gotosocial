@@ -81,7 +81,6 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 	const toggleAllRef = React.useRef(null);
 
 	React.useEffect(() => {
-		performance.mark("GoToSocial-useCheckListInput-useEffect-start");
 		/* Updates (un)check all checkbox, based on shortcode checkboxes
 			 Can be 0 (not checked), 1 (checked) or 2 (indeterminate)
 		 */
@@ -108,8 +107,6 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 			setToggleAllState(all ? 1 : 0);
 			toggleAllRef.current.indeterminate = false;
 		}
-		performance.mark("GoToSocial-useCheckListInput-useEffect-finish");
-		performance.measure("GoToSocial-useCheckListInput-useEffect-processed", "GoToSocial-useCheckListInput-useEffect-start", "GoToSocial-useCheckListInput-useEffect-finish");
 	}, [state, toggleAllRef]);
 
 	const reset = React.useCallback(
@@ -137,7 +134,8 @@ module.exports = function useCheckListInput({ name }, { entries, uniqueKey = "ke
 		function selectedValues() {
 			return syncpipe(state, [
 				(_) => Object.values(_),
-				(_) => _.filter((entry) => entry.checked)
+				(_) => _.filter((entry) => entry.checked),
+				(_) => _.map((entry) => ({ ...entry }))
 			]);
 		}
 

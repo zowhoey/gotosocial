@@ -87,6 +87,7 @@ module.exports = function useTextInput({ name, Name }, {
 		ref: textRef,
 		setter: setText,
 		valid,
+		validate: () => setValidation(validator(text)),
 		hasChanged: () => text != defaultValue
 	});
 };
