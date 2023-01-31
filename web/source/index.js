@@ -66,7 +66,6 @@ skulk({
 			],
 		},
 		settings: {
-			debug: true,
 			entryFile: "settings",
 			outputFile: "settings.js",
 			prodCfg: prodCfg,
